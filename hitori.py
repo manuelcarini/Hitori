@@ -15,6 +15,7 @@ class Game:
         self._startingpoint = (0, 0)
         self._origin = 0  # Punto di origine della casella in alto a sinistra
         self._boxsize = 32  # Dimensione di ogni casella
+        self._totalboxes = 0  # Numero di caselle bianche totali
 
     def creategame(self):
         """
@@ -28,33 +29,50 @@ class Game:
             for i in range(self._difficulty):
                 Box(self._boxes, n, i, self._origin, self._matrix[n][i])  # Crea casella a riga n e colonna i con il numero corrispondente
 
-    def checkwin(self) -> int:
+    def totalboxes(self):
+        self._totalboxes = 0
+        for box in self._boxes:
+            if ActualGame._statematrix[box._row][box._column] != 1:
+                self._totalboxes += 1
+        return self._totalboxes
+
+    def check(self, finalcheck: bool):
         """
         Controlla se le condizioni di vittoria sono soddisfatte, altrimenti ritorna lo stato che verrà utilizzato per indicare cosa è sbagliato.
         """
-        totalboxes = 0  # Numero di caselle bianche totali, utilizzato per il controllo di isolamento
         totalboxlist = []
         for box in self._boxes:
             if self._statematrix[box._row][box._column] == 1:  # Se la casella è nera, controlla che non ve ne siano di adiacenti
-                if not blackcheck(box._row, box._column):
-                    status = 1
-                    return status
+                if not blackcheck(box):
+                    if finalcheck:
+                        status = 1
+                        return status
+                    else:
+                        return False
             else:
                 self._startingpoint = (box._row, box._column)  # Utilizza questa casella come punto di inizio per il controllo successivo
-                totalboxes += 1
-                if not numbercheck(box._number, box.row(), box.column()):  # Altrimenti controlla se il numero è già presente nella riga/colonna
-                    status = 2
-                    return status
-        if len(list(set(isolationcheck(self._startingpoint, totalboxlist)))) == totalboxes:
+                if not numbercheck(box):  # Altrimenti controlla se il numero è già presente nella riga/colonna
+                    if finalcheck:
+                        status = 2
+                        return status
+                    else:
+                        return False
+        if isolationcheck(self._startingpoint, totalboxlist, self.totalboxes()):
             """
             Controllo della lista di caselle bianche continue tra loro. La funzione, essendo ricorsiva, aggiunge più volte lo stesso valore
             alla lista, quindi vengono rimossi quelli doppi prima di effettuare il paragone.
             """
-            status = 4
-            return status  # Se il programma arriva qui, le altre condizioni sono già state verificate, quindi possiamo uscire in tranquillità
+            if finalcheck:
+                status = 4
+                return status
+            else:
+                return True  # Se il programma arriva qui, le altre condizioni sono già state verificate, quindi possiamo uscire in tranquillità
         else:
-            status = 3
-            return status
+            if finalcheck:
+                status = 3
+                return status
+            else:
+                return False
 
 
 class Box:
@@ -71,28 +89,6 @@ class Box:
         self._selected = False  # Casella inizialmente non selezionata
         self._x = self._origin + ActualGame._boxsize * self._column  # Posizione sul canvas in base al numero di colonna
         self._y = self._origin + ActualGame._boxsize * self._row   # Posizione sul canvas in base al numero di riga
-        self._columnlist = []
-        self._rowlist = []
-
-    def column(self) -> list:
-        """
-        Restituisce una lista dei numeri nella stessa colonna, esclusa la casella stessa e quelle annerite
-        """
-        self._columnlist = []  # Resetta la lista a ogni utilizzo
-        for elem in self._boxlist:
-            if elem is not self and self._column == elem._column and ActualGame._statematrix[elem._row][elem._column] != 1:
-                self._columnlist.append(elem._number)
-        return self._columnlist
-
-    def row(self) -> list:
-        """
-        Restituisce una lista dei numeri nella stessa riga, esclusa la casella stessa e quelle annerite
-        """
-        self._rowlist = []  # Resetta la lista a ogni utilizzo
-        for elem in self._boxlist:
-            if elem is not self and self._row == elem._row and ActualGame._statematrix[elem._row][elem._column] != 1:
-                self._rowlist.append(elem._number)
-        return self._rowlist
 
 
 class GUI:
@@ -139,7 +135,7 @@ class GUI:
                 self._time = datetime.datetime.now()  # Ottiene l'ora di inizio della partita
                 ActualGame.creategame()
             GUIElement(GUI, 32, 16, 0, 24, 0, self._timer, False)   # Durata della partita. Il timer si blocca se il giocatore ha vinto
-            GUIElement(GUI, 200, 16, 0, 24, 0, 'Clicks:' + str(self._clicks), False)
+            GUIElement(GUI, 128, 16, 0, 24, 0, 'Clicks:' + str(self._clicks), False)
             if self._substate != 0:
                 self._subtimer -= 1  # Se è in un sottostato, sottrai il timer
                 if self._subtimer == 0:  # Una volta esaurito, se il sottostato è quello di vittoria, ritorna al menu principale
@@ -158,6 +154,7 @@ class GUI:
                     GUIElement(GUI, 120, 440, 0, 18, 0, 'Puzzle complete!', False)
             if self._substate != 4:
                 GUIElement(GUI, 400, 16, 0, 24, 0, 'Check', True)  # Il pulsante non appare se il giocatore ha vinto
+                GUIElement(GUI, 256, 16, 0, 24, 0, 'Hint', True)
                 self._timer = str((datetime.datetime.now() - self._time))[2:-7]  # Differenza tra ora attuale e ora di inizio, in minuti e secondi
 
     def clearui(self):
@@ -193,10 +190,69 @@ class GUIElement:
             self._w = w
 
 
-def blackcheck(row: int, column: int) -> bool:
+def hint():
+    changes = 0
+    for box in ActualGame._boxes:
+        if ActualGame._statematrix[box._row][box._column] == 0:
+            if not blackcheck(box):
+                ActualGame._statematrix[box._row][box._column] = 2
+                changes += 1
+                for subbox in ActualGame._boxes:
+                    if (box._row == subbox._row or box._column == subbox._column) and box._number == subbox._number and ActualGame._statematrix[subbox._row][subbox._column] != 1 and box is not subbox:
+                        ActualGame._statematrix[subbox._row][subbox._column] = 1
+                        changes += 1
+                        break
+                break
+            elif numbercheck(box):
+                ActualGame._statematrix[box._row][box._column] = 1
+                changes += 1
+                conditionlist = [(box._row - 1, box._column), (box._row + 1, box._column), (box._row, box._column - 1), (box._row, box._column + 1)]  # Lista delle caselle da controllare
+                for cond in conditionlist:
+                    if cond[0] < 0 or cond[1] < 0 or cond[0] > ActualGame._difficulty - 1 or cond[1] > ActualGame._difficulty - 1:
+                        continue  # Se la casella risultante ha coordinate negative o superiori alle dimensioni della griglia, ignorala
+                    else:
+                        ActualGame._statematrix[cond[0]][cond[1]] = 2
+                        changes += 1
+                        break
+                break
+        elif ActualGame._statematrix[box._row][box._column] == 1:
+            if not blackcheck(box):
+                ActualGame._statematrix[box._row][box._column] = 2
+                changes += 1
+                for subbox in ActualGame._boxes:
+                    if (box._row == subbox._row or box._column == subbox._column) and box._number == subbox._number and ActualGame._statematrix[subbox._row][subbox._column] != 1 and box is not subbox:
+                        ActualGame._statematrix[subbox._row][subbox._column] = 1
+                        changes += 1
+                        break
+                break
+            else:
+                if numbercheck(box):
+                    ActualGame._statematrix[box._row][box._column] = 2
+                    changes += 1
+                    break
+        elif ActualGame._statematrix[box._row][box._column] == 2:
+            if not numbercheck(box):
+                ActualGame._statematrix[box._row][box._column] = 1
+                changes += 1
+                conditionlist = [(box._row - 1, box._column), (box._row + 1, box._column), (box._row, box._column - 1), (box._row, box._column + 1)]  # Lista delle caselle da controllare
+                for cond in conditionlist:
+                    if cond[0] < 0 or cond[1] < 0 or cond[0] > ActualGame._difficulty - 1 or cond[1] > ActualGame._difficulty - 1:
+                        continue  # Se la casella risultante ha coordinate negative o superiori alle dimensioni della griglia, ignorala
+                    else:
+                        ActualGame._statematrix[cond[0]][cond[1]] = 2
+                        changes += 1
+                        break
+                break
+    if changes > 0:
+        GUI._clicks += 1
+
+
+def blackcheck(box: Box) -> bool:
     """
     Controlla la presenza di caselle annerite adiacenti a quella selezionata
     """
+    row = box._row
+    column = box._column
     conditionlist = [(row - 1, column), (row + 1, column), (row, column - 1), (row, column + 1)]  # Lista delle caselle da controllare
     for cond in conditionlist:
         if cond[0] < 0 or cond[1] < 0 or cond[0] > ActualGame._difficulty - 1 or cond[1] > ActualGame._difficulty - 1:
@@ -207,20 +263,28 @@ def blackcheck(row: int, column: int) -> bool:
     return True
 
 
-def numbercheck(number: int, rowlist: list, columnlist: list) -> bool:
+def numbercheck(box: Box) -> bool:
     """
     Controlla la presenza di numeri identici a quello dato nella riga e colonna selezionate
     """
-    for box in columnlist:
-        if number == box:
-            return False
-    for box in rowlist:
-        if number == box:
+    for subbox in ActualGame._boxes:
+        if (box._row == subbox._row or box._column == subbox._column) and box._number == subbox._number and ActualGame._statematrix[subbox._row][subbox._column] != 1 and box is not subbox:
             return False
     return True
 
 
-def isolationcheck(startingpoint: (int, int), totalboxlist: list) -> list:
+def isolationcheck(startingpoint, totalboxlist, totalboxes):
+    if len(list(set(isolationai(startingpoint, totalboxlist)))) == totalboxes:
+        """
+        Controllo della lista di caselle bianche continue tra loro. La funzione, essendo ricorsiva, aggiunge più volte lo stesso valore
+        alla lista, quindi vengono rimossi quelli doppi prima di effettuare il paragone.
+        """
+        return True
+    else:
+        return False
+
+
+def isolationai(startingpoint: (int, int), totalboxlist: list) -> list:
     """
     Controlla che nessuna casella bianca sia isolata. Ammazzatemi.
     """
@@ -234,7 +298,7 @@ def isolationcheck(startingpoint: (int, int), totalboxlist: list) -> list:
     if len(conditionlist) != 0:  # Se c'è almeno una casella da controllare
         for cond in conditionlist:
             totalboxlist.append(cond)  # Aggiungi la casella controllata alla lista finale
-            isolationcheck(cond, totalboxlist)  # Funzione ricorsiva
+            isolationai(cond, totalboxlist)  # Funzione ricorsiva
     return totalboxlist
 
 
@@ -268,8 +332,10 @@ def checkbuttons():
                     GUI._state = 0
                 break  # Non serve controllare tutto
             elif GUI._state == 2:  # Partita vera e propria
-                if i == len(GUI._elements) - 1:  # Pulsante Check
-                    GUI._substate = ActualGame.checkwin()
+                if i == len(GUI._elements) - 2:  # Pulsante Check
+                    GUI._substate = ActualGame.check(True)
+                elif i == len(GUI._elements) - 1:
+                    hint()
     # --------Controllo caselle------- #
     if GUI._gamerunning:  # Effettua il controllo solo se in partita
         for box in ActualGame._boxes:
